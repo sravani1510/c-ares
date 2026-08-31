@@ -44,7 +44,7 @@
  *   0xE2-0xE9 -> S-Z
  *   0xF0-0xF9 -> 0-9
  */
-const unsigned char ares__ebcdic_to_ascii_table[256] = {
+const unsigned char ares_ebcdic_to_ascii_table[256] = {
   /* 0x00-0x0F */
   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
   0x0D, 0x0E, 0x0F,
@@ -99,11 +99,11 @@ const unsigned char ares__ebcdic_to_ascii_table[256] = {
  * string in out, which must be at least len+1 bytes.  Stops at the first
  * NUL; trailing EBCDIC blank (0x40) padding becomes ASCII spaces, which
  * ares_strsplit() then drops as empty tokens. */
-void ares__ebcdic_to_ascii_str(const char *ebcdic, size_t len, char *out)
+void ares_ebcdic_to_ascii_str(const char *ebcdic, size_t len, char *out)
 {
   size_t i;
   for (i = 0; i < len && ebcdic[i] != '\0'; i++) {
-    out[i] = (char)ares__ebcdic_to_ascii_table[(unsigned char)ebcdic[i]];
+    out[i] = (char)ares_ebcdic_to_ascii_table[(unsigned char)ebcdic[i]];
   }
   out[i] = '\0';
 }
@@ -133,7 +133,7 @@ typedef struct {
 
 /* Byte-exact overlay of IBM TCPA1400 (QtocRtvTCPA format TCPA1400).
  * domain_name[255] + reserved[1] = 256 bytes; this lands request_dnssec at
- * offset 612 (4-byte aligned) with zero compiler padding — do not reorder or
+ * offset 612 (4-byte aligned) with zero compiler padding -- do not reorder or
  * remove any field, including char reserved. */
 typedef struct {
   int  dns_list_offset;
@@ -147,7 +147,7 @@ typedef struct {
   int  dns_listening_port;
   char hostname[64];
   char domain_name[255];
-  char reserved; /* padding: do not remove — required for byte-exact layout */
+  char reserved; /* padding: do not remove -- required for byte-exact layout */
   char search_list[256];
   int  request_dnssec;
 } tcpa1400_t;
@@ -168,7 +168,7 @@ static pthread_mutex_t ile_mutex               = PTHREAD_MUTEX_INITIALIZER;
 /* Thread-safe initialization of ILE API with fork detection.
  * ILE pointers are invalidated in a child process after fork(), so we
  * cache the PID and re-initialize whenever it changes. */
-static ares_bool_t load_ile_api(void)
+static ares_bool_t     load_ile_api(void)
 {
   ares_bool_t        ok = ARES_TRUE;
   unsigned long long actmark;
@@ -273,8 +273,8 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
 
   /* Call QtocRtvTCPA ILE API.
    * Note: qtocrtvtcpa_ptr is read outside ile_mutex here.  This is safe in
-   * practice — the pointer is stable once initialized, and a child process
-   * calling this function is single-threaded post-fork — but is formally an
+   * practice -- the pointer is stable once initialized, and a child process
+   * calling this function is single-threaded post-fork -- but is formally an
    * unsynchronized read of the global. */
   rc = _ILECALL(&qtocrtvtcpa_ptr, &arglist.base, signature, RESULT_VOID);
 
@@ -284,14 +284,14 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
   }
 
   /* --- Validate outer header offset before use (B5) --- */
-  header = (tcpa1100_t *)buffer;
+  header = (tcpa1100_t *)(void *)buffer;
   if (header->additional_info_offset < 0 ||
       (size_t)header->additional_info_offset + sizeof(tcpa1400_t) >
         (size_t)buflen) {
     ares_free(buffer);
     return ares_init_sysconfig_files(channel, sysconfig, ARES_TRUE);
   }
-  header2 = (tcpa1400_t *)(buffer + header->additional_info_offset);
+  header2 = (tcpa1400_t *)(void *)(buffer + header->additional_info_offset);
 
   /* --- Extract DNS servers (B5: validate offsets; B6: apply port) --- */
   if (header2->dns_list_entry_size < (int)sizeof(dns_list_item_t)) {
@@ -309,7 +309,7 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
     if (off + sizeof(dns_list_item_t) > (size_t)buflen) {
       break;
     }
-    item = (dns_list_item_t *)(buffer + off);
+    item = (dns_list_item_t *)(void *)(buffer + off);
     af   = (item->version == 1 ? AF_INET : AF_INET6);
 
     if (inet_ntop(af, item->ip_address, ip, sizeof(ip)) == NULL) {
@@ -335,12 +335,12 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
   /* --- Extract domain search list (B2: convert whole field, no truncation) ---
    * The field is EBCDIC, space-separated, blank-padded.  Convert the whole
    * buffer first; EBCDIC 0x40 becomes ASCII ' ', which ares_strsplit then
-   * uses as a delimiter — correctly splitting all domains and dropping the
+   * uses as a delimiter -- correctly splitting all domains and dropping the
    * trailing blank padding as empty tokens. */
   {
     char search_ascii[sizeof(header2->search_list) + 1]; /* +1 for NUL (B2) */
-    ares__ebcdic_to_ascii_str(header2->search_list,
-                              sizeof(header2->search_list), search_ascii);
+    ares_ebcdic_to_ascii_str(header2->search_list,
+                             sizeof(header2->search_list), search_ascii);
     sysconfig->domains =
       ares_strsplit(search_ascii, ", ", &sysconfig->ndomains);
     /* NULL with ndomains==0 means the field was empty, not an alloc error */
@@ -356,8 +356,8 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
   if (sysconfig->ndomains == 0 && header2->domain_name[0] != '\0' &&
       header2->domain_name[0] != EBCDIC_SPACE) {
     char domain_ascii[sizeof(header2->domain_name) + 1];
-    ares__ebcdic_to_ascii_str(header2->domain_name,
-                              sizeof(header2->domain_name), domain_ascii);
+    ares_ebcdic_to_ascii_str(header2->domain_name,
+                             sizeof(header2->domain_name), domain_ascii);
     sysconfig->domains = ares_strsplit(domain_ascii, " ", &sysconfig->ndomains);
     if (sysconfig->domains == NULL && sysconfig->ndomains > 0) {
       ares_free(buffer);
@@ -372,7 +372,7 @@ ares_status_t ares_init_sysconfig_pase(const ares_channel_t *channel,
 
   /* --- Configure tries (B3: IBM retries excludes first attempt) ---
    * retries=0 means 1 total attempt; retries=2 means 3 total.
-   * Set unconditionally — the API always returns a valid value (0-99). */
+   * Set unconditionally -- the API always returns a valid value (0-99). */
   sysconfig->tries = (size_t)header2->retries + 1;
 
   /* Configure rotate (initial_server: 1=first always, 2=rotate) */
